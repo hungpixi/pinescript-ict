@@ -254,6 +254,10 @@ f_drawTrade(int dir, float entry, float sl, float tp1, float tp2, float tp3) =>
         array.shift(tradeActive)
 
 // ─── UPDATE BSL LEVELS & SWEEP DETECTION ─────────────────────────────────────
+var array<label> sweepLabels = array.new_label()  // managed sweep labels
+var array<label> pendLabels  = array.new_label()  // managed pending labels
+var array<line>  pendLines   = array.new_line()   // managed pending lines
+
 var int bslSweepCount = 0
 bool bslSweepNow = false
 float bslSweepPrice = na
@@ -275,7 +279,10 @@ for i = 0 to array.size(linesBSL) - 1
             bslSweepNow := true
             bslSweepPrice := priceI
             if showSweep
-                label.new(bar_index, high, "▼ BSL Sweep", color=colSweepBear, textcolor=color.white, style=label.style_label_down, size=size.small)
+                label swLbl = label.new(bar_index, high, "▼ BSL", color=colSweepBear, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+                array.push(sweepLabels, swLbl)
+                if array.size(sweepLabels) > maxTrades * 2
+                    label.delete(array.shift(sweepLabels))
         if close > priceI
             array.set(brokenBSL, i, true)
             line.set_xy2(ln, bar_index, priceI)
@@ -305,7 +312,10 @@ for i = 0 to array.size(linesSSL) - 1
             sslSweepNow := true
             sslSweepPrice := priceI
             if showSweep
-                label.new(bar_index, low, "▲ SSL Sweep", color=colSweepBull, textcolor=color.white, style=label.style_label_up, size=size.small)
+                label swLbl = label.new(bar_index, low, "▲ SSL", color=colSweepBull, textcolor=color.white, style=label.style_label_up, size=size.tiny)
+                array.push(sweepLabels, swLbl)
+                if array.size(sweepLabels) > maxTrades * 2
+                    label.delete(array.shift(sweepLabels))
         if close < priceI
             array.set(brokenSSL, i, true)
             line.set_xy2(ln, bar_index, priceI)
@@ -409,11 +419,16 @@ if showEntry and barstate.isconfirmed and cooldownOk and tradeSlotOk
             pendBuySL := distFromEntry < minSLDist ? pendBuyEntry - minSLDist : rawSL
             pendBuyBar := bar_index
             if showSweep
-                line.new(bar_index, sslSweepPrice, bar_index + pendBuyExpiry, sslSweepPrice,
+                line pLine = line.new(bar_index, sslSweepPrice, bar_index + pendBuyExpiry, sslSweepPrice,
                      color=color.new(colBuy, 50), width=1, style=line.style_dotted)
-                label.new(bar_index, sslSweepPrice, "⏳ Pending BUY @ " + str.tostring(sslSweepPrice, format.mintick),
+                label pLbl = label.new(bar_index, sslSweepPrice, "⏳ BUY @ " + str.tostring(sslSweepPrice, format.mintick),
                      color=color.new(colBuy, 70), textcolor=color.white,
                      style=label.style_label_right, size=size.tiny)
+                array.push(pendLines, pLine)
+                array.push(pendLabels, pLbl)
+                if array.size(pendLabels) > maxTrades
+                    line.delete(array.shift(pendLines))
+                    label.delete(array.shift(pendLabels))
 
     // BSL Sweep in Premium → create pending SELL at BSL level
     if bslSweepNow and inPremium
@@ -430,11 +445,16 @@ if showEntry and barstate.isconfirmed and cooldownOk and tradeSlotOk
             pendSellSL := distFromEntry < minSLDist ? pendSellEntry + minSLDist : rawSL
             pendSellBar := bar_index
             if showSweep
-                line.new(bar_index, bslSweepPrice, bar_index + pendSellExpiry, bslSweepPrice,
+                line pLine = line.new(bar_index, bslSweepPrice, bar_index + pendSellExpiry, bslSweepPrice,
                      color=color.new(colSell, 50), width=1, style=line.style_dotted)
-                label.new(bar_index, bslSweepPrice, "⏳ Pending SELL @ " + str.tostring(bslSweepPrice, format.mintick),
+                label pLbl = label.new(bar_index, bslSweepPrice, "⏳ SELL @ " + str.tostring(bslSweepPrice, format.mintick),
                      color=color.new(colSell, 70), textcolor=color.white,
                      style=label.style_label_right, size=size.tiny)
+                array.push(pendLines, pLine)
+                array.push(pendLabels, pLbl)
+                if array.size(pendLabels) > maxTrades
+                    line.delete(array.shift(pendLines))
+                    label.delete(array.shift(pendLabels))
 
 // ── Step 2: Check pending orders for retest fill ──
 // Pending BUY: giá pullback xuống chạm pendBuyEntry → fill
