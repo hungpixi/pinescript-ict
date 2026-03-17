@@ -43,7 +43,7 @@ grpEntry       = "🎯 Entry Signals (SL/TP)"
 bool showEntry = input.bool(true, "Show Entry Signals", group=grpEntry)
 bool requireOTE = input.bool(false, "Require OTE Zone for Entry", group=grpEntry, tooltip="Chỉ hiện signal khi sweep xảy ra trong OTE zone — setup chất lượng cao hơn nhưng ít tín hiệu hơn.")
 float rrRatio  = input.float(2.0, "Risk:Reward Ratio (fallback)", minval=1.0, maxval=5.0, step=0.5, group=grpEntry, tooltip="Dùng khi không tìm được liquidity level đối diện. 2.0 = TP gấp đôi SL.")
-int maxTrades  = input.int(5, "Max Active Trades Shown", minval=1, maxval=20, group=grpEntry)
+int maxTrades  = input.int(50, "Max Trades Shown", minval=5, maxval=100, group=grpEntry)
 bool showTP2   = input.bool(true, "Show TP2 (at EQ)", group=grpEntry, tooltip="TP2 tại đường Equilibrium. Partial close tại đây.")
 bool showTP3   = input.bool(false, "Show TP3 (opposite zone)", group=grpEntry, tooltip="TP3 tại vùng ngược lại (Premium→Discount hoặc ngược lại).")
 int cooldownBars = input.int(5, "Cooldown (bars)", minval=1, maxval=30, group=grpEntry, tooltip="Chờ N bars sau mỗi signal trước khi cho signal tiếp.")
@@ -214,18 +214,7 @@ f_drawTrade(int dir, float entry, float sl, float tp1, float tp2, float tp3) =>
         tp3Line := line.new(bar_index, tp3, bar_index + 15, tp3, 
              color=color.new(#AB47BC, 0), width=1, style=line.style_dotted)
 
-    // SL/TP labels
-    label.new(bar_index + 15, sl, "SL", color=color.new(color.white, 100), 
-         textcolor=colSL, style=label.style_label_left, size=size.tiny)
-    label.new(bar_index + 15, tp1, "TP1 (R:" + str.tostring(rrActual, "#.#") + ")", 
-         color=color.new(color.white, 100), textcolor=colTP, 
-         style=label.style_label_left, size=size.tiny)
-    if showTP2 and not na(tp2)
-        label.new(bar_index + 15, tp2, "TP2 (EQ)", color=color.new(color.white, 100), 
-             textcolor=color.new(#42A5F5, 0), style=label.style_label_left, size=size.tiny)
-    if showTP3 and not na(tp3)
-        label.new(bar_index + 15, tp3, "TP3", color=color.new(color.white, 100), 
-             textcolor=color.new(#AB47BC, 0), style=label.style_label_left, size=size.tiny)
+    // (No standalone SL/TP text labels — info is in entry label to avoid label overflow)
 
     // Entry-to-SL zone fill (red background)
     box.new(bar_index, entry, bar_index + 15, sl, 
@@ -325,26 +314,34 @@ for i = 0 to array.size(linesSSL) - 1
         line.set_style(ln, line.style_dashed)
 
 // ─── CHECK ACTIVE TRADE: SL/TP HIT ──────────────────────────────────────────
+var array<label> hitLabels = array.new_label()
+
 if hasActiveTrade
     bool slHit = activeDir == 1 ? low <= activeSL : high >= activeSL
     bool tpHit = activeDir == 1 ? high >= activeTP : low <= activeTP
     if slHit
         hasActiveTrade := false
         totalSLHits += 1
-        label.new(bar_index, activeDir == 1 ? low : high, "✖ SL",
+        label hitLbl = label.new(bar_index, activeDir == 1 ? low : high, "✖",
              color=color.new(#FF5252, 0), textcolor=color.white,
              style=activeDir == 1 ? label.style_label_up : label.style_label_down,
              size=size.tiny)
+        array.push(hitLabels, hitLbl)
+        if array.size(hitLabels) > maxTrades
+            label.delete(array.shift(hitLabels))
         activeSL := na
         activeTP := na
         activeDir := 0
     else if tpHit
         hasActiveTrade := false
         totalTPHits += 1
-        label.new(bar_index, activeDir == 1 ? high : low, "✔ TP",
+        label hitLbl = label.new(bar_index, activeDir == 1 ? high : low, "✔",
              color=color.new(#69F0AE, 0), textcolor=color.white,
              style=activeDir == 1 ? label.style_label_down : label.style_label_up,
              size=size.tiny)
+        array.push(hitLabels, hitLbl)
+        if array.size(hitLabels) > maxTrades
+            label.delete(array.shift(hitLabels))
         activeSL := na
         activeTP := na
         activeDir := 0
