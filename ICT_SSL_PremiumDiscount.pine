@@ -41,21 +41,37 @@ color colOTE   = input.color(color.new(#FF9800, 85), "OTE Zone Color", group=grp
 // ─── ENTRY / SL / TP SETTINGS ─────────────────────────────────────────────────
 grpEntry       = "🎯 Entry Signals (SL/TP)"
 bool showEntry = input.bool(true, "Show Entry Signals", group=grpEntry)
-bool requireOTE = input.bool(false, "Require OTE Zone for Entry", group=grpEntry, tooltip="Chỉ hiện signal khi sweep xảy ra trong OTE zone — setup chất lượng cao hơn nhưng ít tín hiệu hơn.")
 float rrRatio  = input.float(2.0, "Risk:Reward Ratio", minval=1.0, maxval=5.0, step=0.5, group=grpEntry, tooltip="Tỷ lệ R:R cho TP. 2.0 = TP gấp đôi khoảng cách SL.")
-float slBuffer = input.float(0.0, "SL Buffer (ticks)", minval=0, step=1, group=grpEntry, tooltip="Buffer thêm cho SL để tránh bị quét. Tính theo tick (point).")
-int maxTrades  = input.int(5, "Max Active Trades Shown", minval=1, maxval=20, group=grpEntry)
-bool showTP2   = input.bool(true, "Show TP2 (at EQ)", group=grpEntry, tooltip="TP2 tại đường Equilibrium. Partial close tại đây.")
-bool showTP3   = input.bool(false, "Show TP3 (opposite zone)", group=grpEntry, tooltip="TP3 tại vùng ngược lại (Premium→Discount hoặc ngược lại).")
+int maxTrades  = input.int(5, "Max Trades Shown", minval=1, maxval=20, group=grpEntry)
+bool showTP2   = input.bool(true, "Show TP2 (at EQ)", group=grpEntry)
+bool showTP3   = input.bool(false, "Show TP3 (opposite zone)", group=grpEntry)
 color colBuy   = input.color(color.new(#00E676, 0), "Buy Signal Color", group=grpEntry)
 color colSell  = input.color(color.new(#FF1744, 0), "Sell Signal Color", group=grpEntry)
 color colSL    = input.color(color.new(#FF5252, 0), "SL Line Color", group=grpEntry)
 color colTP    = input.color(color.new(#69F0AE, 0), "TP Line Color", group=grpEntry)
 
+// ─── ENTRY QUALITY FILTERS ───────────────────────────────────────────────────
+grpFilter      = "🛡️ Entry Filters"
+bool useTrend  = input.bool(true, "Trend Filter (EMA)", group=grpFilter, tooltip="Chỉ BUY khi giá trên EMA (uptrend), chỉ SELL khi dưới EMA (downtrend).")
+int trendLen   = input.int(50, "Trend EMA Length", minval=10, maxval=200, group=grpFilter)
+bool useRejection = input.bool(true, "Rejection Candle Filter", group=grpFilter, tooltip="Yêu cầu nến sweep phải có wick dài (rejection) — lọc bớt sweep yếu.")
+float rejRatio = input.float(1.5, "Min Wick/Body Ratio", minval=1.0, maxval=5.0, step=0.5, group=grpFilter, tooltip="Wick phải dài hơn body x lần. 1.5 = wick dài gấp 1.5 lần body.")
+int cooldownBars = input.int(5, "Cooldown (bars)", minval=1, maxval=20, group=grpFilter, tooltip="Sau mỗi signal, chờ N bars trước khi cho signal tiếp.")
+bool oneAtATime = input.bool(true, "One Trade at a Time", group=grpFilter, tooltip="Chỉ cho 1 trade active. Phải chạm SL hoặc TP mới cho signal mới.")
+float atrMult  = input.float(0.5, "SL Buffer (ATR multiplier)", minval=0.0, maxval=2.0, step=0.1, group=grpFilter, tooltip="Buffer SL = ATR × multiplier. 0.5 = thêm nửa ATR vào SL.")
+int atrLen     = input.int(14, "ATR Length", minval=5, maxval=50, group=grpFilter)
+
 // Dashboard
 grpDash        = "📋 Dashboard"
 bool showDash  = input.bool(true, "Show Dashboard", group=grpDash)
 string dashPos = input.string("Top Right", "Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=grpDash)
+
+// ─── COMMON CALCULATIONS ─────────────────────────────────────────────────────
+float trendEMA = ta.ema(close, trendLen)
+float atrVal   = ta.atr(atrLen)
+float bodySize = math.abs(close - open)
+float upperWick = high - math.max(close, open)
+float lowerWick = math.min(close, open) - low
 
 // ─── FRACTAL DETECTION ────────────────────────────────────────────────────────
 float highestInRange = ta.highest(high, leftBars * 2 + 1)
@@ -64,14 +80,12 @@ bool isFractalHigh   = high[leftBars] == highestInRange and high[leftBars] > hig
 bool isFractalLow    = low[leftBars] == lowestInRange and low[leftBars] < low[leftBars - 1] and low[leftBars] < low[leftBars + 1]
 
 // ─── LIQUIDITY LEVEL ARRAYS ──────────────────────────────────────────────────
-// BSL arrays (swing highs)
 var array<line>  linesBSL    = array.new_line()
 var array<int>   barsBSL     = array.new_int()
 var array<float> pricesBSL   = array.new_float()
 var array<bool>  brokenBSL   = array.new_bool()
 var array<bool>  sweptBSL    = array.new_bool()
 
-// SSL arrays (swing lows)
 var array<line>  linesSSL    = array.new_line()
 var array<int>   barsSSL     = array.new_int()
 var array<float> pricesSSL   = array.new_float()
@@ -89,7 +103,6 @@ if isFractalHigh and barstate.isconfirmed and showBSL
     array.push(pricesBSL, swingPrice)
     array.push(brokenBSL, false)
     array.push(sweptBSL, false)
-    // Trim oldest
     if array.size(linesBSL) > maxSwings
         line.delete(array.shift(linesBSL))
         array.shift(barsBSL)
@@ -106,7 +119,6 @@ if isFractalLow and barstate.isconfirmed and showSSL
     array.push(pricesSSL, swingPrice)
     array.push(brokenSSL, false)
     array.push(sweptSSL, false)
-    // Trim oldest
     if array.size(linesSSL) > maxSwings
         line.delete(array.shift(linesSSL))
         array.shift(barsSSL)
@@ -114,130 +126,126 @@ if isFractalLow and barstate.isconfirmed and showSSL
         array.shift(brokenSSL)
         array.shift(sweptSSL)
 
-// ─── PREMIUM & DISCOUNT ZONES (calculated before sweep detection) ────────────
+// ─── PREMIUM & DISCOUNT ZONES ────────────────────────────────────────────────
 float rangeHigh = ta.highest(high, pdLookback)
 float rangeLow  = ta.lowest(low, pdLookback)
 float eq        = (rangeHigh + rangeLow) / 2.0
 
-// OTE zone
 float rangeSize   = rangeHigh - rangeLow
-float oteBuyHigh  = rangeLow + rangeSize * 0.382   // 38.2% from bottom = 61.8% retracement from top
-float oteBuyLow   = rangeLow + rangeSize * 0.21    // 21% from bottom = 79% retracement from top
-float oteSellHigh = rangeLow + rangeSize * 0.79    // 79% from bottom
-float oteSellLow  = rangeLow + rangeSize * 0.618   // 61.8% from bottom
+float oteBuyHigh  = rangeLow + rangeSize * 0.382
+float oteBuyLow   = rangeLow + rangeSize * 0.21
+float oteSellHigh = rangeLow + rangeSize * 0.79
+float oteSellLow  = rangeLow + rangeSize * 0.618
 
 bool inPremium  = close > eq
 bool inDiscount = close <= eq
 bool inOTEBuy   = close >= oteBuyLow and close <= oteBuyHigh
 bool inOTESell  = close >= oteSellLow and close <= oteSellHigh
 
-// ─── TRADE ENTRY TRACKING ARRAYS ─────────────────────────────────────────────
+// ─── TRADE STATE TRACKING ────────────────────────────────────────────────────
+var int   lastSignalBar  = 0     // bar_index of last signal (for cooldown)
+var bool  hasActiveTrade = false // one-at-a-time flag
+var float activeSL       = na   // active trade SL
+var float activeTP       = na   // active trade TP1
+var int   activeDir      = 0    // 1=buy, -1=sell
+
 var array<line>  tradeSLLines  = array.new_line()
 var array<line>  tradeTP1Lines = array.new_line()
 var array<line>  tradeTP2Lines = array.new_line()
 var array<line>  tradeTP3Lines = array.new_line()
 var array<label> tradeLabels   = array.new_label()
-var array<int>   tradeBars     = array.new_int()
-var array<float> tradeEntries  = array.new_float()
-var array<float> tradeSLs      = array.new_float()
-var array<float> tradeTP1s     = array.new_float()
-var array<int>   tradeDirs     = array.new_int() // 1=buy, -1=sell
-var array<bool>  tradeActive   = array.new_bool()
 
-// Trade outcome tracking
 var int totalBuys    = 0
 var int totalSells   = 0
-var int activeTrades = 0
+var int totalTPHits  = 0
+var int totalSLHits  = 0
 
-// ─── HELPER: Create trade visualization ──────────────────────────────────────
+// ─── CHECK ACTIVE TRADE: SL/TP HIT (before new signals) ─────────────────────
+if hasActiveTrade
+    bool slHit = activeDir == 1 ? low <= activeSL : high >= activeSL
+    bool tpHit = activeDir == 1 ? high >= activeTP : low <= activeTP
+    
+    if slHit
+        hasActiveTrade := false
+        totalSLHits += 1
+        label.new(bar_index, activeDir == 1 ? low : high, "✖ SL", 
+             color=color.new(#FF5252, 0), textcolor=color.white, 
+             style=activeDir == 1 ? label.style_label_up : label.style_label_down, 
+             size=size.tiny)
+        activeSL := na
+        activeTP := na
+        activeDir := 0
+    else if tpHit
+        hasActiveTrade := false
+        totalTPHits += 1
+        label.new(bar_index, activeDir == 1 ? high : low, "✔ TP", 
+             color=color.new(#69F0AE, 0), textcolor=color.white, 
+             style=activeDir == 1 ? label.style_label_down : label.style_label_up, 
+             size=size.tiny)
+        activeSL := na
+        activeTP := na
+        activeDir := 0
+
+// ─── HELPER: Draw trade visualization ────────────────────────────────────────
 f_drawTrade(int dir, float entry, float sl, float tp1, float tp2, float tp3) =>
-    // Colors
     color sigCol = dir == 1 ? colBuy : colSell
     string sigText = dir == 1 ? "🟢 BUY" : "🔴 SELL"
     float riskPips = math.abs(entry - sl)
     float rrActual = riskPips > 0 ? math.abs(tp1 - entry) / riskPips : 0
 
-    // Entry label
     label entryLbl = label.new(bar_index, dir == 1 ? low : high, 
-         sigText + "\nEntry: " + str.tostring(entry, format.mintick) + 
-         "\nSL: " + str.tostring(sl, format.mintick) + 
-         "\nTP1: " + str.tostring(tp1, format.mintick) + 
-         "\nR:R " + str.tostring(rrActual, "#.#"),
+         sigText + "\nE:" + str.tostring(entry, format.mintick) + 
+         " SL:" + str.tostring(sl, format.mintick) + 
+         "\nTP:" + str.tostring(tp1, format.mintick) + 
+         " R:" + str.tostring(rrActual, "#.#"),
          color=sigCol, textcolor=color.white, 
          style=dir == 1 ? label.style_label_up : label.style_label_down, 
          size=size.small)
 
-    // SL line (red, dashed)
-    line slLine = line.new(bar_index, sl, bar_index + 15, sl, 
+    line slLine = line.new(bar_index, sl, bar_index + 20, sl, 
          color=colSL, width=2, style=line.style_dashed)
-
-    // TP1 line (green, dashed) — based on R:R
-    line tp1Line = line.new(bar_index, tp1, bar_index + 15, tp1, 
+    line tp1Line = line.new(bar_index, tp1, bar_index + 20, tp1, 
          color=colTP, width=2, style=line.style_dashed)
 
-    // TP2 line at EQ (if enabled)
     line tp2Line = na
     if showTP2 and not na(tp2)
-        tp2Line := line.new(bar_index, tp2, bar_index + 15, tp2, 
+        tp2Line := line.new(bar_index, tp2, bar_index + 20, tp2, 
              color=color.new(#42A5F5, 0), width=1, style=line.style_dotted)
+        label.new(bar_index + 20, tp2, "TP2", color=color.new(color.white, 100), 
+             textcolor=color.new(#42A5F5, 0), style=label.style_label_left, size=size.tiny)
 
-    // TP3 line at opposite zone (if enabled)
     line tp3Line = na
     if showTP3 and not na(tp3)
-        tp3Line := line.new(bar_index, tp3, bar_index + 15, tp3, 
+        tp3Line := line.new(bar_index, tp3, bar_index + 20, tp3, 
              color=color.new(#AB47BC, 0), width=1, style=line.style_dotted)
 
-    // SL/TP labels
-    label.new(bar_index + 15, sl, "SL", color=color.new(color.white, 100), 
+    label.new(bar_index + 20, sl, "SL", color=color.new(color.white, 100), 
          textcolor=colSL, style=label.style_label_left, size=size.tiny)
-    label.new(bar_index + 15, tp1, "TP1 (R:" + str.tostring(rrActual, "#.#") + ")", 
-         color=color.new(color.white, 100), textcolor=colTP, 
-         style=label.style_label_left, size=size.tiny)
-    if showTP2 and not na(tp2)
-        label.new(bar_index + 15, tp2, "TP2 (EQ)", color=color.new(color.white, 100), 
-             textcolor=color.new(#42A5F5, 0), style=label.style_label_left, size=size.tiny)
-    if showTP3 and not na(tp3)
-        label.new(bar_index + 15, tp3, "TP3", color=color.new(color.white, 100), 
-             textcolor=color.new(#AB47BC, 0), style=label.style_label_left, size=size.tiny)
+    label.new(bar_index + 20, tp1, "TP1", color=color.new(color.white, 100), 
+         textcolor=colTP, style=label.style_label_left, size=size.tiny)
 
-    // Entry-to-SL zone fill (red background)
-    box.new(bar_index, entry, bar_index + 15, sl, 
-         border_color=color.new(colSL, 70), bgcolor=color.new(colSL, 92), 
+    // Risk/Reward zone boxes
+    box.new(bar_index, entry, bar_index + 20, sl, 
+         border_color=color.new(colSL, 80), bgcolor=color.new(colSL, 93), 
+         border_width=1, border_style=line.style_dotted)
+    box.new(bar_index, entry, bar_index + 20, tp1, 
+         border_color=color.new(colTP, 80), bgcolor=color.new(colTP, 93), 
          border_width=1, border_style=line.style_dotted)
 
-    // Entry-to-TP1 zone fill (green background)
-    box.new(bar_index, entry, bar_index + 15, tp1, 
-         border_color=color.new(colTP, 70), bgcolor=color.new(colTP, 92), 
-         border_width=1, border_style=line.style_dotted)
-
-    // Store trade data
+    // Trim oldest trades
     array.push(tradeSLLines, slLine)
     array.push(tradeTP1Lines, tp1Line)
     array.push(tradeTP2Lines, tp2Line)
     array.push(tradeTP3Lines, tp3Line)
     array.push(tradeLabels, entryLbl)
-    array.push(tradeBars, bar_index)
-    array.push(tradeEntries, entry)
-    array.push(tradeSLs, sl)
-    array.push(tradeTP1s, tp1)
-    array.push(tradeDirs, dir)
-    array.push(tradeActive, true)
-
-    // Trim oldest trades
     if array.size(tradeLabels) > maxTrades
         line.delete(array.shift(tradeSLLines))
         line.delete(array.shift(tradeTP1Lines))
         line.delete(array.shift(tradeTP2Lines))
         line.delete(array.shift(tradeTP3Lines))
         label.delete(array.shift(tradeLabels))
-        array.shift(tradeBars)
-        array.shift(tradeEntries)
-        array.shift(tradeSLs)
-        array.shift(tradeTP1s)
-        array.shift(tradeDirs)
-        array.shift(tradeActive)
 
-// ─── UPDATE BSL LEVELS & SWEEP DETECTION + SELL ENTRIES ──────────────────────
+// ─── UPDATE BSL LEVELS & SWEEP DETECTION ─────────────────────────────────────
 var int bslSweepCount = 0
 bool bslSweepNow = false
 float bslSweepPrice = na
@@ -247,35 +255,26 @@ for i = 0 to array.size(linesBSL) - 1
         break
     line  ln       = array.get(linesBSL, i)
     float priceI   = array.get(pricesBSL, i)
-    int   barI     = array.get(barsBSL, i)
     bool  wasBroken = array.get(brokenBSL, i)
     bool  wasSwept  = array.get(sweptBSL, i)
 
     if not wasBroken
-        // Extend line to current bar
         line.set_xy2(ln, bar_index, priceI)
-
-        // Sweep detection: wick above level but close below
         if high >= priceI and close < priceI and not wasSwept
-            // Sweep! Wick touched but close didn't break
             array.set(sweptBSL, i, true)
             bslSweepCount += 1
             bslSweepNow := true
             bslSweepPrice := priceI
             if showSweep
-                label.new(bar_index, high, "▼ BSL Sweep", color=colSweepBear, textcolor=color.white, style=label.style_label_down, size=size.small)
-
-        // Broken: close above level
+                label.new(bar_index, high, "▼ BSL", color=colSweepBear, textcolor=color.white, style=label.style_label_down, size=size.tiny)
         if close > priceI
             array.set(brokenBSL, i, true)
             line.set_xy2(ln, bar_index, priceI)
             line.set_style(ln, line.style_dashed)
-
-    // If already broken, keep dashed style and don't extend
     if wasBroken
         line.set_style(ln, line.style_dashed)
 
-// ─── UPDATE SSL LEVELS & SWEEP DETECTION + BUY ENTRIES ──────────────────────
+// ─── UPDATE SSL LEVELS & SWEEP DETECTION ─────────────────────────────────────
 var int sslSweepCount = 0
 bool sslSweepNow = false
 float sslSweepPrice = na
@@ -285,57 +284,48 @@ for i = 0 to array.size(linesSSL) - 1
         break
     line  ln       = array.get(linesSSL, i)
     float priceI   = array.get(pricesSSL, i)
-    int   barI     = array.get(barsSSL, i)
     bool  wasBroken = array.get(brokenSSL, i)
     bool  wasSwept  = array.get(sweptSSL, i)
 
     if not wasBroken
-        // Extend line to current bar
         line.set_xy2(ln, bar_index, priceI)
-
-        // Sweep detection: wick below level but close above
         if low <= priceI and close > priceI and not wasSwept
-            // Sweep! Wick touched but close didn't break
             array.set(sweptSSL, i, true)
             sslSweepCount += 1
             sslSweepNow := true
             sslSweepPrice := priceI
             if showSweep
-                label.new(bar_index, low, "▲ SSL Sweep", color=colSweepBull, textcolor=color.white, style=label.style_label_up, size=size.small)
-
-        // Broken: close below level
+                label.new(bar_index, low, "▲ SSL", color=colSweepBull, textcolor=color.white, style=label.style_label_up, size=size.tiny)
         if close < priceI
             array.set(brokenSSL, i, true)
             line.set_xy2(ln, bar_index, priceI)
             line.set_style(ln, line.style_dashed)
-
-    // If already broken, keep dashed style and don't extend
     if wasBroken
         line.set_style(ln, line.style_dashed)
 
-// ─── GENERATE ENTRY SIGNALS ──────────────────────────────────────────────────
+// ─── ENTRY SIGNAL GENERATION (with quality filters) ──────────────────────────
 // ICT Entry Model:
-// BUY:  SSL Sweep (liquidity grab below swing low) + price in Discount zone
-//       SL = swept swing low - buffer
-//       TP1 = entry + (entry - SL) * R:R ratio
-//       TP2 = EQ (equilibrium, partial close)
-//       TP3 = Premium zone boundary (rangeHigh)
-//
-// SELL: BSL Sweep (liquidity grab above swing high) + price in Premium zone
-//       SL = swept swing high + buffer
-//       TP1 = entry - (SL - entry) * R:R ratio
-//       TP2 = EQ (equilibrium, partial close)
-//       TP3 = Discount zone boundary (rangeLow)
+// BUY:  SSL Sweep in Discount + bullish rejection + trend confirm + cooldown
+// SELL: BSL Sweep in Premium + bearish rejection + trend confirm + cooldown
 
-float bufferPts = slBuffer * syminfo.mintick
+float bufferAtr = atrVal * atrMult
+bool cooldownOk = bar_index - lastSignalBar >= cooldownBars
+bool tradeSlotOk = oneAtATime ? not hasActiveTrade : true
 
-if showEntry and barstate.isconfirmed
+if showEntry and barstate.isconfirmed and cooldownOk and tradeSlotOk
+
     // ── BUY SIGNAL: SSL Sweep in Discount ──
-    if sslSweepNow and inDiscount
-        bool oteOk = requireOTE ? inOTEBuy : true
-        if oteOk and not na(sslSweepPrice)
+    if sslSweepNow and inDiscount and not na(sslSweepPrice)
+        // Filter 1: Trend — price must be above EMA (uptrend) or filter disabled
+        bool trendOk = useTrend ? close > trendEMA : true
+        // Filter 2: Rejection candle — lower wick must be significantly longer than body
+        bool rejOk = useRejection ? (bodySize > 0 ? lowerWick / bodySize >= rejRatio : lowerWick > 0) : true
+        // Filter 3: Bullish close — candle must close green (close > open)
+        bool bullClose = close > open
+
+        if trendOk and rejOk and bullClose
             float entryPrice = close
-            float slPrice = sslSweepPrice - bufferPts
+            float slPrice = sslSweepPrice - bufferAtr
             float risk = entryPrice - slPrice
             float tp1Price = entryPrice + risk * rrRatio
             float tp2Price = eq
@@ -344,13 +334,24 @@ if showEntry and barstate.isconfirmed
             if risk > 0
                 f_drawTrade(1, entryPrice, slPrice, tp1Price, tp2Price, tp3Price)
                 totalBuys += 1
+                lastSignalBar := bar_index
+                hasActiveTrade := true
+                activeSL := slPrice
+                activeTP := tp1Price
+                activeDir := 1
 
     // ── SELL SIGNAL: BSL Sweep in Premium ──
-    if bslSweepNow and inPremium
-        bool oteOk = requireOTE ? inOTESell : true
-        if oteOk and not na(bslSweepPrice)
+    if bslSweepNow and inPremium and not na(bslSweepPrice)
+        // Filter 1: Trend — price must be below EMA (downtrend) or filter disabled
+        bool trendOk = useTrend ? close < trendEMA : true
+        // Filter 2: Rejection candle — upper wick must be significantly longer than body
+        bool rejOk = useRejection ? (bodySize > 0 ? upperWick / bodySize >= rejRatio : upperWick > 0) : true
+        // Filter 3: Bearish close — candle must close red (close < open)
+        bool bearClose = close < open
+
+        if trendOk and rejOk and bearClose
             float entryPrice = close
-            float slPrice = bslSweepPrice + bufferPts
+            float slPrice = bslSweepPrice + bufferAtr
             float risk = slPrice - entryPrice
             float tp1Price = entryPrice - risk * rrRatio
             float tp2Price = eq
@@ -359,42 +360,20 @@ if showEntry and barstate.isconfirmed
             if risk > 0
                 f_drawTrade(-1, entryPrice, slPrice, tp1Price, tp2Price, tp3Price)
                 totalSells += 1
-
-// ─── CHECK ACTIVE TRADES: SL/TP HIT ─────────────────────────────────────────
-// Mark trades inactive when SL or TP1 is hit
-for i = 0 to array.size(tradeActive) - 1
-    if i >= array.size(tradeActive)
-        break
-    if array.get(tradeActive, i)
-        int dir = array.get(tradeDirs, i)
-        float sl = array.get(tradeSLs, i)
-        float tp = array.get(tradeTP1s, i)
-        
-        bool slHit = dir == 1 ? low <= sl : high >= sl
-        bool tpHit = dir == 1 ? high >= tp : low <= tp
-        
-        if slHit
-            array.set(tradeActive, i, false)
-            label.new(bar_index, dir == 1 ? low : high, "✖ SL Hit", 
-                 color=color.new(#FF5252, 0), textcolor=color.white, 
-                 style=dir == 1 ? label.style_label_up : label.style_label_down, 
-                 size=size.tiny)
-        else if tpHit
-            array.set(tradeActive, i, false)
-            label.new(bar_index, dir == 1 ? high : low, "✔ TP Hit", 
-                 color=color.new(#69F0AE, 0), textcolor=color.white, 
-                 style=dir == 1 ? label.style_label_down : label.style_label_up, 
-                 size=size.tiny)
+                lastSignalBar := bar_index
+                hasActiveTrade := true
+                activeSL := slPrice
+                activeTP := tp1Price
+                activeDir := -1
 
 // ─── ZONE VISUALIZATION ──────────────────────────────────────────────────────
-// Background coloring for zones
 bgcolor(showPD and inPremium ? colPrem : na, title="Premium Zone BG")
 bgcolor(showPD and inDiscount ? colDisc : na, title="Discount Zone BG")
 bgcolor(showOTE and inOTEBuy ? colOTE : na, title="OTE Buy Zone BG")
 bgcolor(showOTE and inOTESell ? colOTE : na, title="OTE Sell Zone BG")
 
-// EQ line
 plot(showPD ? eq : na, "Equilibrium (50%)", color=colEQ, linewidth=2, style=plot.style_line)
+plot(useTrend ? trendEMA : na, "Trend EMA", color=color.new(#787B86, 50), linewidth=1, style=plot.style_line)
 
 // ─── PREMIUM & DISCOUNT ZONE BOXES ───────────────────────────────────────────
 var box premBox  = na
@@ -464,46 +443,53 @@ if showDash
         => position.top_right
 
     if barstate.islast
-        dash := table.new(tablePos, 2, 8, bgcolor=color.new(#1e222d, 10), border_color=color.new(#363a45, 0), border_width=1, frame_color=color.new(#363a45, 0), frame_width=2)
+        int totalTrades = totalTPHits + totalSLHits
+        float winRate = totalTrades > 0 ? totalTPHits / totalTrades * 100 : 0
+
+        dash := table.new(tablePos, 2, 9, bgcolor=color.new(#1e222d, 10), border_color=color.new(#363a45, 0), border_width=1, frame_color=color.new(#363a45, 0), frame_width=2)
 
         // Header
         table.cell(dash, 0, 0, "ICT SSL P&D", text_color=color.white, text_size=size.small, bgcolor=color.new(#2962FF, 20))
         table.cell(dash, 1, 0, "Status", text_color=color.white, text_size=size.small, bgcolor=color.new(#2962FF, 20))
 
-        // Zone Status
+        // Zone
         string zoneText = inPremium ? "PREMIUM ⬆" : "DISCOUNT ⬇"
         color zoneColor = inPremium ? color.new(#F23645, 20) : color.new(#089981, 20)
         table.cell(dash, 0, 1, "Zone", text_color=color.gray, text_size=size.small)
         table.cell(dash, 1, 1, zoneText, text_color=color.white, text_size=size.small, bgcolor=zoneColor)
 
-        // OTE Status
+        // OTE
         string oteText = inOTEBuy ? "OTE BUY 🎯" : inOTESell ? "OTE SELL 🎯" : "—"
         color oteColor = inOTEBuy ? color.new(#FF9800, 30) : inOTESell ? color.new(#FF9800, 30) : color.new(#363a45, 0)
         table.cell(dash, 0, 2, "OTE", text_color=color.gray, text_size=size.small)
         table.cell(dash, 1, 2, oteText, text_color=color.white, text_size=size.small, bgcolor=oteColor)
 
-        // EQ Price
-        table.cell(dash, 0, 3, "EQ Price", text_color=color.gray, text_size=size.small)
+        // EQ
+        table.cell(dash, 0, 3, "EQ", text_color=color.gray, text_size=size.small)
         table.cell(dash, 1, 3, str.tostring(eq, format.mintick), text_color=color.white, text_size=size.small)
 
-        // Sweep Counts
+        // Sweeps
         table.cell(dash, 0, 4, "Sweeps", text_color=color.gray, text_size=size.small)
-        table.cell(dash, 1, 4, "SSL:" + str.tostring(sslSweepCount) + " | BSL:" + str.tostring(bslSweepCount), text_color=color.white, text_size=size.small)
+        table.cell(dash, 1, 4, "SSL:" + str.tostring(sslSweepCount) + " BSL:" + str.tostring(bslSweepCount), text_color=color.white, text_size=size.small)
 
-        // ── Trade Stats ──
+        // Trade header
         table.cell(dash, 0, 5, "──────", text_color=color.new(#363a45, 0), text_size=size.small, bgcolor=color.new(#2962FF, 20))
         table.cell(dash, 1, 5, "Trades", text_color=color.white, text_size=size.small, bgcolor=color.new(#2962FF, 20))
 
-        // Buy/Sell count
+        // Signals
         table.cell(dash, 0, 6, "Signals", text_color=color.gray, text_size=size.small)
-        table.cell(dash, 1, 6, "🟢" + str.tostring(totalBuys) + " | 🔴" + str.tostring(totalSells), text_color=color.white, text_size=size.small)
+        table.cell(dash, 1, 6, "🟢" + str.tostring(totalBuys) + " 🔴" + str.tostring(totalSells), text_color=color.white, text_size=size.small)
 
-        // R:R Setting
-        table.cell(dash, 0, 7, "R:R", text_color=color.gray, text_size=size.small)
-        table.cell(dash, 1, 7, "1:" + str.tostring(rrRatio, "#.#"), text_color=color.white, text_size=size.small)
+        // Win Rate
+        table.cell(dash, 0, 7, "Results", text_color=color.gray, text_size=size.small)
+        table.cell(dash, 1, 7, "✔" + str.tostring(totalTPHits) + " ✖" + str.tostring(totalSLHits), text_color=color.white, text_size=size.small, bgcolor=winRate >= 50 ? color.new(#089981, 30) : totalTrades > 0 ? color.new(#F23645, 30) : color.new(#363a45, 0))
+
+        // Win Rate %
+        table.cell(dash, 0, 8, "Win %", text_color=color.gray, text_size=size.small)
+        table.cell(dash, 1, 8, totalTrades > 0 ? str.tostring(winRate, "#.#") + "%" : "—", text_color=color.white, text_size=size.small)
 
 // ─── ALERTS ──────────────────────────────────────────────────────────────────
-alertcondition(ta.crossover(close, eq), "Price crossed above EQ (entering Premium)", "Price entered PREMIUM zone — EQ crossover")
-alertcondition(ta.crossunder(close, eq), "Price crossed below EQ (entering Discount)", "Price entered DISCOUNT zone — EQ crossunder")
-alertcondition(sslSweepNow and inDiscount, "BUY Signal (SSL Sweep in Discount)", "🟢 BUY: SSL Sweep detected in Discount zone")
-alertcondition(bslSweepNow and inPremium, "SELL Signal (BSL Sweep in Premium)", "🔴 SELL: BSL Sweep detected in Premium zone")
+alertcondition(ta.crossover(close, eq), "EQ Crossover (→ Premium)", "Price entered PREMIUM zone")
+alertcondition(ta.crossunder(close, eq), "EQ Crossunder (→ Discount)", "Price entered DISCOUNT zone")
+alertcondition(sslSweepNow and inDiscount, "BUY Signal (SSL Sweep + Discount)", "🟢 BUY: SSL Sweep in Discount")
+alertcondition(bslSweepNow and inPremium, "SELL Signal (BSL Sweep + Premium)", "🔴 SELL: BSL Sweep in Premium")
