@@ -8,8 +8,8 @@ indicator("ICT SSL Premium & Discount", overlay=true, max_lines_count=500, max_b
 // ─── INPUTS ───────────────────────────────────────────────────────────────────
 // Fractal / Swing Detection
 grpSwing       = "🔍 Swing Detection"
-int leftBars   = input.int(3, "Fractal Bars (each side)", minval=1, maxval=10, group=grpSwing, tooltip="Bars mỗi bên để xác nhận fractal. 3 = 7-bar fractal.")
-int maxSwings  = input.int(10, "Max Swings to Show", minval=3, maxval=20, group=grpSwing)
+int leftBars   = input.int(1, "Fractal Bars (each side)", minval=1, maxval=10, group=grpSwing, tooltip="Bars mỗi bên để xác nhận fractal. 3 = 7-bar fractal.")
+int maxSwings  = input.int(5, "Max Swings to Show", minval=3, maxval=20, group=grpSwing)
 
 // SSL / BSL Display
 grpLiq         = "💧 Liquidity Levels"
@@ -52,6 +52,12 @@ color colBuy   = input.color(color.new(#00E676, 0), "Buy Signal Color", group=gr
 color colSell  = input.color(color.new(#FF1744, 0), "Sell Signal Color", group=grpEntry)
 color colSL    = input.color(color.new(#FF5252, 0), "SL Line Color", group=grpEntry)
 color colTP    = input.color(color.new(#69F0AE, 0), "TP Line Color", group=grpEntry)
+
+// SL Structure Settings
+grpSL          = "🛡️ SL Settings"
+int slLookback = input.int(14, "SL Structure Lookback (bars)", minval=1, maxval=50, group=grpSL, tooltip="Tìm structural low/high trong N bars gần nhất để đặt SL. 14 = nhìn lại 14 cây nến.")
+float minSLDist = input.float(5.0, "Min SL Distance (price)", minval=0.0, step=1.0, group=grpSL, tooltip="Khoảng cách SL tối thiểu tính theo giá. VD: 5.0 cho XAUUSD = ít nhất $5.")
+string slMethod = input.string("Structure", "SL Method", options=["Structure", "Sweep Wick", "Both (farthest)"], group=grpSL, tooltip="Structure = low/high N bars. Sweep Wick = wick của sweep candle. Both = lấy cái xa nhất.")
 
 // Dashboard
 grpDash        = "📋 Dashboard"
@@ -155,6 +161,21 @@ var float activeSL     = na
 var float activeTP     = na
 var int   activeDir    = 0
 
+// ─── PENDING ENTRY STATE (retest model) ──────────────────────────────────────
+// Khi sweep xảy ra → lưu "pending order" tại swept level
+// Bar sau nếu giá chạm lại level → trigger entry (như limit order)
+var bool  pendingBuy     = false
+var float pendBuyEntry   = na   // entry = SSL level bị swept
+var float pendBuySL      = na   // SL = wick low của sweep candle
+var int   pendBuyBar     = 0    // bar khi sweep xảy ra
+var int   pendBuyExpiry  = 10   // hết hạn sau N bars
+
+var bool  pendingSell    = false
+var float pendSellEntry  = na   // entry = BSL level bị swept
+var float pendSellSL     = na   // SL = wick high của sweep candle
+var int   pendSellBar    = 0
+var int   pendSellExpiry = 10
+
 // ─── HELPER: Create trade visualization ──────────────────────────────────────
 f_drawTrade(int dir, float entry, float sl, float tp1, float tp2, float tp3) =>
     // Colors
@@ -177,7 +198,7 @@ f_drawTrade(int dir, float entry, float sl, float tp1, float tp2, float tp3) =>
     line slLine = line.new(bar_index, sl, bar_index + 15, sl, 
          color=colSL, width=2, style=line.style_dashed)
 
-    // TP1 line (green, dashed) — based on R:R
+    // TP1 line (green, dashed)
     line tp1Line = line.new(bar_index, tp1, bar_index + 15, tp1, 
          color=colTP, width=2, style=line.style_dashed)
 
@@ -243,7 +264,7 @@ f_drawTrade(int dir, float entry, float sl, float tp1, float tp2, float tp3) =>
         array.shift(tradeDirs)
         array.shift(tradeActive)
 
-// ─── UPDATE BSL LEVELS & SWEEP DETECTION + SELL ENTRIES ──────────────────────
+// ─── UPDATE BSL LEVELS & SWEEP DETECTION ─────────────────────────────────────
 var int bslSweepCount = 0
 bool bslSweepNow = false
 float bslSweepPrice = na
@@ -258,30 +279,22 @@ for i = 0 to array.size(linesBSL) - 1
     bool  wasSwept  = array.get(sweptBSL, i)
 
     if not wasBroken
-        // Extend line to current bar
         line.set_xy2(ln, bar_index, priceI)
-
-        // Sweep detection: wick above level but close below
         if high >= priceI and close < priceI and not wasSwept
-            // Sweep! Wick touched but close didn't break
             array.set(sweptBSL, i, true)
             bslSweepCount += 1
             bslSweepNow := true
             bslSweepPrice := priceI
             if showSweep
                 label.new(bar_index, high, "▼ BSL Sweep", color=colSweepBear, textcolor=color.white, style=label.style_label_down, size=size.small)
-
-        // Broken: close above level
         if close > priceI
             array.set(brokenBSL, i, true)
             line.set_xy2(ln, bar_index, priceI)
             line.set_style(ln, line.style_dashed)
-
-    // If already broken, keep dashed style and don't extend
     if wasBroken
         line.set_style(ln, line.style_dashed)
 
-// ─── UPDATE SSL LEVELS & SWEEP DETECTION + BUY ENTRIES ──────────────────────
+// ─── UPDATE SSL LEVELS & SWEEP DETECTION ─────────────────────────────────────
 var int sslSweepCount = 0
 bool sslSweepNow = false
 float sslSweepPrice = na
@@ -296,30 +309,22 @@ for i = 0 to array.size(linesSSL) - 1
     bool  wasSwept  = array.get(sweptSSL, i)
 
     if not wasBroken
-        // Extend line to current bar
         line.set_xy2(ln, bar_index, priceI)
-
-        // Sweep detection: wick below level but close above
         if low <= priceI and close > priceI and not wasSwept
-            // Sweep! Wick touched but close didn't break
             array.set(sweptSSL, i, true)
             sslSweepCount += 1
             sslSweepNow := true
             sslSweepPrice := priceI
             if showSweep
                 label.new(bar_index, low, "▲ SSL Sweep", color=colSweepBull, textcolor=color.white, style=label.style_label_up, size=size.small)
-
-        // Broken: close below level
         if close < priceI
             array.set(brokenSSL, i, true)
             line.set_xy2(ln, bar_index, priceI)
             line.set_style(ln, line.style_dashed)
-
-    // If already broken, keep dashed style and don't extend
     if wasBroken
         line.set_style(ln, line.style_dashed)
 
-// ─── CHECK ACTIVE TRADE: SL/TP HIT (before new signals) ─────────────────────
+// ─── CHECK ACTIVE TRADE: SL/TP HIT ──────────────────────────────────────────
 if hasActiveTrade
     bool slHit = activeDir == 1 ? low <= activeSL : high >= activeSL
     bool tpHit = activeDir == 1 ? high >= activeTP : low <= activeTP
@@ -345,8 +350,6 @@ if hasActiveTrade
         activeDir := 0
 
 // ─── HELPER: Find nearest opposite liquidity level ───────────────────────────
-// BUY → TP = nearest un-broken BSL (swing high) above entry
-// SELL → TP = nearest un-broken SSL (swing low) below entry
 f_nearestBSL(float abovePrice) =>
     float nearest = na
     for i = 0 to array.size(pricesBSL) - 1
@@ -371,73 +374,133 @@ f_nearestSSL(float belowPrice) =>
                 nearest := p
     nearest
 
-// ─── GENERATE ENTRY SIGNALS ──────────────────────────────────────────────────
-// ICT Entry Model (structural SL/TP):
+// ─── ENTRY SIGNAL: RETEST MODEL ─────────────────────────────────────────────
+// ICT Retest Entry Model:
 //
-// BUY:  SSL Sweep → smart money grabbed liquidity below swing low
-//       Entry = close of sweep candle
-//       SL    = low of sweep candle (wick extreme — if price breaks this, setup is invalid)
-//       TP1   = nearest un-broken BSL (swing high) above entry — next liquidity target
-//       TP2   = EQ (equilibrium, partial close)
+// 1. Sweep xảy ra → tạo "pending limit order" tại swept level
+// 2. Chờ giá retest lại level đó trên bar sau → trigger entry
+// 3. Nếu giá không retest trong N bars → pending hết hạn
 //
-// SELL: BSL Sweep → smart money grabbed liquidity above swing high
-//       Entry = close of sweep candle
-//       SL    = high of sweep candle (wick extreme — if price breaks this, setup is invalid)
-//       TP1   = nearest un-broken SSL (swing low) below entry — next liquidity target
-//       TP2   = EQ (equilibrium, partial close)
+// BUY:  SSL Sweep → pending buy tại SSL level
+//       Khi giá pullback xuống chạm SSL level → Entry = SSL level
+//       SL = wick low của sweep candle
+//       TP = nearest BSL above
+//
+// SELL: BSL Sweep → pending sell tại BSL level
+//       Khi giá pullback lên chạm BSL level → Entry = BSL level
+//       SL = wick high của sweep candle
+//       TP = nearest SSL below
 
 bool cooldownOk = bar_index - lastSignalBar >= cooldownBars
 bool tradeSlotOk = oneAtATime ? not hasActiveTrade : true
 
+// ── Step 1: Create pending orders when sweep detected ──
 if showEntry and barstate.isconfirmed and cooldownOk and tradeSlotOk
 
-    // ── BUY SIGNAL: SSL Sweep in Discount ──
+    // SSL Sweep in Discount → create pending BUY at SSL level
     if sslSweepNow and inDiscount
         bool oteOk = requireOTE ? inOTEBuy : true
         if oteOk and not na(sslSweepPrice)
-            float entryPrice = close
-            // SL = sweep candle wick low (structural — where smart money finished grabbing)
-            float slPrice = low
-            float risk = entryPrice - slPrice
-            // TP1 = nearest un-broken BSL above entry (next liquidity target)
-            float nearBSL = f_nearestBSL(entryPrice)
-            float tp1Price = not na(nearBSL) ? nearBSL : entryPrice + risk * rrRatio
-            float tp2Price = eq
-            float tp3Price = showTP3 ? rangeHigh : na
+            pendingBuy   := true
+            pendBuyEntry := sslSweepPrice  // entry = tại swept SSL level
+            // SL calculation based on method
+            float wickSL = low  // sweep candle wick
+            float structSL = ta.lowest(low, slLookback)  // structural low over N bars
+            float rawSL = slMethod == "Structure" ? structSL : slMethod == "Sweep Wick" ? wickSL : math.min(wickSL, structSL)
+            // Enforce minimum SL distance
+            float distFromEntry = pendBuyEntry - rawSL
+            pendBuySL := distFromEntry < minSLDist ? pendBuyEntry - minSLDist : rawSL
+            pendBuyBar := bar_index
+            if showSweep
+                line.new(bar_index, sslSweepPrice, bar_index + pendBuyExpiry, sslSweepPrice,
+                     color=color.new(colBuy, 50), width=1, style=line.style_dotted)
+                label.new(bar_index, sslSweepPrice, "⏳ Pending BUY @ " + str.tostring(sslSweepPrice, format.mintick),
+                     color=color.new(colBuy, 70), textcolor=color.white,
+                     style=label.style_label_right, size=size.tiny)
 
-            if risk > 0 and entryPrice > slPrice
-                f_drawTrade(1, entryPrice, slPrice, tp1Price, tp2Price, tp3Price)
-                totalBuys += 1
-                lastSignalBar := bar_index
-                hasActiveTrade := true
-                activeSL := slPrice
-                activeTP := tp1Price
-                activeDir := 1
-
-    // ── SELL SIGNAL: BSL Sweep in Premium ──
+    // BSL Sweep in Premium → create pending SELL at BSL level
     if bslSweepNow and inPremium
         bool oteOk = requireOTE ? inOTESell : true
         if oteOk and not na(bslSweepPrice)
-            float entryPrice = close
-            // SL = sweep candle wick high (structural)
-            float slPrice = high
-            float risk = slPrice - entryPrice
-            // TP1 = nearest un-broken SSL below entry (next liquidity target)
-            float nearSSL = f_nearestSSL(entryPrice)
-            float tp1Price = not na(nearSSL) ? nearSSL : entryPrice - risk * rrRatio
-            float tp2Price = eq
-            float tp3Price = showTP3 ? rangeLow : na
+            pendingSell   := true
+            pendSellEntry := bslSweepPrice  // entry = tại swept BSL level
+            // SL calculation based on method
+            float wickSL = high  // sweep candle wick
+            float structSL = ta.highest(high, slLookback)  // structural high over N bars
+            float rawSL = slMethod == "Structure" ? structSL : slMethod == "Sweep Wick" ? wickSL : math.max(wickSL, structSL)
+            // Enforce minimum SL distance
+            float distFromEntry = rawSL - pendSellEntry
+            pendSellSL := distFromEntry < minSLDist ? pendSellEntry + minSLDist : rawSL
+            pendSellBar := bar_index
+            if showSweep
+                line.new(bar_index, bslSweepPrice, bar_index + pendSellExpiry, bslSweepPrice,
+                     color=color.new(colSell, 50), width=1, style=line.style_dotted)
+                label.new(bar_index, bslSweepPrice, "⏳ Pending SELL @ " + str.tostring(bslSweepPrice, format.mintick),
+                     color=color.new(colSell, 70), textcolor=color.white,
+                     style=label.style_label_right, size=size.tiny)
 
-            if risk > 0 and slPrice > entryPrice
-                f_drawTrade(-1, entryPrice, slPrice, tp1Price, tp2Price, tp3Price)
-                totalSells += 1
-                lastSignalBar := bar_index
-                hasActiveTrade := true
-                activeSL := slPrice
-                activeTP := tp1Price
-                activeDir := -1
+// ── Step 2: Check pending orders for retest fill ──
+// Pending BUY: giá pullback xuống chạm pendBuyEntry → fill
+if pendingBuy and not hasActiveTrade
+    // Expired?
+    if bar_index - pendBuyBar > pendBuyExpiry
+        pendingBuy := false
+        pendBuyEntry := na
+    // SL hit trước khi fill? (giá phá qua wick low)
+    else if low < pendBuySL
+        pendingBuy := false
+        pendBuyEntry := na
+    // FILL: giá chạm lại SSL level (low <= entry level)
+    else if low <= pendBuyEntry
+        float entryPrice = pendBuyEntry
+        float slPrice = pendBuySL
+        float risk = entryPrice - slPrice
+        float nearBSL = f_nearestBSL(entryPrice)
+        float tp1Price = not na(nearBSL) ? nearBSL : entryPrice + risk * rrRatio
+        float tp2Price = eq
+        float tp3Price = showTP3 ? rangeHigh : na
 
-// (SL/TP hit check is above, before signal generation)
+        if risk > 0
+            f_drawTrade(1, entryPrice, slPrice, tp1Price, tp2Price, tp3Price)
+            totalBuys += 1
+            lastSignalBar := bar_index
+            hasActiveTrade := true
+            activeSL := slPrice
+            activeTP := tp1Price
+            activeDir := 1
+        pendingBuy := false
+        pendBuyEntry := na
+
+// Pending SELL: giá pullback lên chạm pendSellEntry → fill
+if pendingSell and not hasActiveTrade
+    // Expired?
+    if bar_index - pendSellBar > pendSellExpiry
+        pendingSell := false
+        pendSellEntry := na
+    // SL hit trước khi fill? (giá phá qua wick high)
+    else if high > pendSellSL
+        pendingSell := false
+        pendSellEntry := na
+    // FILL: giá chạm lại BSL level (high >= entry level)
+    else if high >= pendSellEntry
+        float entryPrice = pendSellEntry
+        float slPrice = pendSellSL
+        float risk = slPrice - entryPrice
+        float nearSSL = f_nearestSSL(entryPrice)
+        float tp1Price = not na(nearSSL) ? nearSSL : entryPrice - risk * rrRatio
+        float tp2Price = eq
+        float tp3Price = showTP3 ? rangeLow : na
+
+        if risk > 0
+            f_drawTrade(-1, entryPrice, slPrice, tp1Price, tp2Price, tp3Price)
+            totalSells += 1
+            lastSignalBar := bar_index
+            hasActiveTrade := true
+            activeSL := slPrice
+            activeTP := tp1Price
+            activeDir := -1
+        pendingSell := false
+        pendSellEntry := na
 
 // ─── ZONE VISUALIZATION ──────────────────────────────────────────────────────
 // Background coloring for zones
