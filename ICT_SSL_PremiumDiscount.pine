@@ -3,7 +3,7 @@
 // © hungpixi — Comarai (https://comarai.com)
 // Reference: jbondata/pinescript-indicator-suite, FibAlgo ICT Premium & Discount
 //@version=6
-indicator("ICT SSL Premium & Discount", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+indicator("[hungpixi] ICT SSL Premium & Discount", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
 
 // ─── INPUTS ───────────────────────────────────────────────────────────────────
 // Display Range

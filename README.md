@@ -1,10 +1,12 @@
-# 📊 ICT SSL Premium & Discount — PineScript v6
+# 📊 ICT SSL Premium & Discount — PineScript v6 + MQL5 EA
 
-> **Chỉ báo ICT Sell-Side / Buy-Side Liquidity + Premium & Discount Zones + Entry Signals** cho TradingView.
+> **ICT Sell-Side / Buy-Side Liquidity + Premium & Discount Zones + Entry Signals** cho TradingView & MetaTrader 5.
 
 ![PineScript](https://img.shields.io/badge/PineScript-v6-blue?style=flat-square)
+![MQL5](https://img.shields.io/badge/MQL5-Expert_Advisor-purple?style=flat-square)
 ![License](https://img.shields.io/badge/License-MPL%202.0-brightgreen?style=flat-square)
 ![TradingView](https://img.shields.io/badge/TradingView-Overlay-orange?style=flat-square)
+![MT5](https://img.shields.io/badge/MetaTrader_5-Backtest_Ready-red?style=flat-square)
 
 ---
 
@@ -14,37 +16,62 @@
 
 Các indicator ICT trên TradingView thường tách biệt: 1 cái cho liquidity levels, 1 cái cho premium/discount, 1 cái khác cho sweep detection. Trader phải dùng 3-4 indicators cùng lúc, chart rối mắt, chồng chéo không nhìn thấy gì.
 
+**Và quan trọng hơn**: indicator chỉ "nhìn" — không trade được. Muốn backtest hay live trading phải tự code lại từ đầu trên MQL5/Python.
+
 ### Giải pháp
 
-**Một indicator duy nhất** kết hợp toàn bộ ICT model:
+**Một hệ thống 2-in-1:**
 
-1. **SSL/BSL Liquidity Levels** — Nơi smart money nhắm tới
-2. **Sweep Detection** — Phát hiện khi liquidity bị quét
-3. **Premium & Discount Zones** — Vùng giá rẻ vs đắt + OTE entry
-4. **Retest Entry Signals** — Entry tự động khi sweep + pullback với SL/TP rõ ràng
-5. **Fixed R:R Target** — TP cố định 3R, không phụ thuộc liquidity level
+1. **PineScript Indicator** → Phân tích visual trên TradingView
+2. **MQL5 Expert Advisor** → Backtest + Live trading trên MetaTrader 5
+
+Cùng logic, cùng methodology, nhưng MQ5 EA có thêm:
+- **DCA (Dollar Cost Averaging)** — Gỡ lệnh lỗ bằng cách trung bình giá
+- **Trailing Stop / Break-Even** — Bảo vệ lợi nhuận tự động
+- **Time-Based Exit** — Cắt lỗ nhanh nếu trade không chạy
+- **ValidateStops** — Kiểm tra SL/TP hợp lệ trước khi gửi lệnh
+
+### Quá trình tư duy PineScript → MQL5
+
+```
+📊 PineScript (Visual Analysis)
+    ↓ Logic mapping
+📋 MQL5 Indicator (OnCalculate)
+    ↓ "Indicator không trade được!"
+🤖 MQL5 Expert Advisor (OnTick)
+    ↓ "Trade rồi nhưng SL/TP bị reject!"
+🛡️ + ValidateStops (SYMBOL_TRADE_STOPS_LEVEL)
+    ↓ "Time exit đóng position sai!"
+⏱️ + iBarShift(posOpenTime) thay vì g_entryBar
+    ↓ "Pending fill trên cùng bar sweep!"
+🔄 + Require currentBar > pendBar
+    ↓ "DCA phá chain!"
+📊 + ManageDCA() tách riêng, ManagePositions() skip khi chain active
+    ↓ "Nặng quá backtest không nổi!"
+⚡ + New-bar-only execution (giảm 99% CPU)
+```
 
 ### Điểm khác biệt
 
-| Feature | Indicator này | jbondata liquidity-swings | FibAlgo Premium/Discount |
+| Feature | Dự án này | jbondata liquidity-swings | FibAlgo Premium/Discount |
 |---------|:---:|:---:|:---:|
 | SSL/BSL liquidity lines | ✅ | ✅ | ❌ |
 | Sweep detection + labels | ✅ | ❌ | ❌ |
 | Premium/Discount zones | ✅ | ❌ | ✅ |
 | OTE zone (62%-79%) | ✅ | ❌ | ✅ |
 | **Retest entry model** | ✅ | ❌ | ❌ |
-| **Fixed R:R target (3R)** | ✅ | ❌ | ❌ |
-| **Display range limit** | ✅ | ❌ | ❌ |
-| **SL min/max validation** | ✅ | ❌ | ❌ |
+| **Fixed R:R target** | ✅ | ❌ | ❌ |
+| **MQL5 Expert Advisor** | ✅ | ❌ | ❌ |
+| **DCA chain management** | ✅ | ❌ | ❌ |
+| **Trailing + Break-Even** | ✅ | ❌ | ❌ |
+| **Time-based exit** | ✅ | ❌ | ❌ |
 | Dashboard + Win% | ✅ | ❌ | ✅ |
 | PineScript v6 | ✅ | ✅ | ❌ |
 
-## ✨ Tính Năng
+## ✨ Tính Năng — PineScript Indicator
 
 ### 📐 Display Range
 - **Show Last N Bars** — Giới hạn indicator trong N bars gần nhất (mặc định 2000)
-- Giảm chart clutter, tập trung vào dữ liệu gần nhất
-- Adjustable 100–10,000 bars
 
 ### 💧 Liquidity Levels (SSL & BSL)
 - **BSL** (xanh lá): Swing highs — Buy-Side Liquidity
@@ -54,66 +81,65 @@ Các indicator ICT trên TradingView thường tách biệt: 1 cái cho liquidit
 ### ⚡ Sweep Detection
 - **SSL Sweep** (▲): Wick xuống dưới swing low nhưng close trên → Bullish
 - **BSL Sweep** (▼): Wick lên trên swing high nhưng close dưới → Bearish
-- Compact icons + hover tooltip xem chi tiết
 
 ### 🎯 Entry Signals (Retest Model)
 ```
-🟢 BUY Setup:
-1. SSL Sweep trong Discount zone → tạo pending buy tại SSL level
-2. Giá pullback xuống chạm lại SSL level → Entry triggered
-3. SL = sweep candle wick (mặc định), clamp min 5 / max 30
-4. TP = Entry + Risk × 3R (cố định, adjustable 1-10R)
-
-🔴 SELL Setup:
-1. BSL Sweep trong Premium zone → tạo pending sell tại BSL level
-2. Giá pullback lên chạm lại BSL level → Entry triggered
-3. SL = sweep candle wick, clamp min 5 / max 30
-4. TP = Entry - Risk × 3R
+🟢 BUY: SSL Sweep trong Discount → pending buy → pullback → Entry 
+🔴 SELL: BSL Sweep trong Premium → pending sell → pullback → Entry
+SL = sweep wick, TP = Entry ± Risk × R:R
 ```
 
-**Hiển thị trên chart:**
-- Entry label compact: `🟢 BUY @ 4998.685`
-- SL line + label: `SL 4993.685` (đỏ, dashed)
-- TP line + label: `TP 3R 5014.055` (xanh, dashed, dày hơn)
-- SL/TP zone fill (subtle background)
+### 📊 Premium & Discount Zones + OTE
 
-### 🛡️ SL Validation
-- **Min SL Distance** (mặc định 5) — Không đặt SL quá gần
-- **Max SL Distance** (mặc định 30) — Không đặt SL quá xa
-- **Sanity check**: SL > 0, risk trong range min–max
-- **SL Method**: Sweep Wick (khuyên dùng) / Structure / Both
+## 🤖 Tính Năng — MQL5 Expert Advisor
 
-### 📊 Premium & Discount Zones
-- Box zones với high transparency — không che price action
-- **Equilibrium (EQ)** line mỏng tại 50%
-- **OTE Buy/Sell** zones (62%–79% retracement)
-- Labels nhỏ gọn đẩy ra phải chart
+### 💰 Trading Engine
+- **CTrade** order execution + `GetFillingType()` auto-detect
+- **ValidateStops()** — Kiểm tra `SYMBOL_TRADE_STOPS_LEVEL` trước khi gửi lệnh
+- **Pending → Retest fill** — Chỉ fill trên bar tiếp theo (không fake retest cùng bar)
 
-### 📋 Dashboard
-- Zone hiện tại (PREMIUM/DISCOUNT)
-- OTE status, EQ price
-- Sweep counts (SSL & BSL)
-- Trade stats: Signals, Results, Win%
+### 📊 DCA (Dollar Cost Averaging)
+- **Max 1-5 lệnh DCA** — Input configurable cho backtest
+- **DCA Distance** — Khoảng cách giá giữa các lệnh
+- **Lot Multiplier** — 1.0 = same lot, 1.5 = tăng dần (martingale)
+- **Chain TP** — Đóng tất cả khi avg entry + profit target
+- **Chain SL** — Max loss protection khi đã hết DCA levels
+- **DCA isolator** — Khi chain active, ManagePositions skip → tránh phá chain
+
+### ⏱️ Time-Based Exit
+- **Max Bars Open** — Đóng trade nếu sau N bar vẫn lỗ
+- **Only If Losing** — Giữ trade nếu đang dương
+- Dùng `iBarShift(posOpenTime)` — đếm bar chính xác
+
+### 📈 Trailing Stop + Break-Even
+- **Trail Start/Step** — Kích hoạt trailing khi đạt profit target
+- **Break-Even** — Dời SL về entry + offset khi đạt BE target
 
 ## 🚀 Cách Sử Dụng
 
-1. Copy nội dung file `ICT_SSL_PremiumDiscount.pine`
-2. Mở TradingView → Pine Editor
-3. Paste code → Add to chart
-4. Tùy chỉnh settings:
-   - **Display Range**: 500–2000 bars tùy nhu cầu
-   - **Risk:Reward**: 3R mặc định (3R là đã win)
-   - **SL Method**: Sweep Wick cho ICT chuẩn
+### PineScript (TradingView)
+1. Copy file `ICT_SSL_PremiumDiscount.pine`
+2. TradingView → Pine Editor → Paste → Add to chart
+
+### MQL5 Expert Advisor (MetaTrader 5)
+1. Copy file `ICT_SSL_PremiumDiscount.mq5` vào `MQL5/Experts/`
+2. Compile bằng MetaEditor
+3. Kéo EA vào chart hoặc mở Strategy Tester
+4. Load file `set1.set` để dùng settings đã optimize
 
 ## 🔄 Changelog
 
+### v3.0 — MQL5 Expert Advisor (2026-03-18)
+- ✅ **PineScript → MQL5 EA** — Full conversion với CTrade execution
+- ✅ **DCA chain** — 1-5 lệnh, distance, lot multiplier, chain TP/SL
+- ✅ **ValidateStops** — Fix "Invalid stops" bằng SYMBOL_TRADE_STOPS_LEVEL
+- ✅ **Time-based exit** — iBarShift + posOpenTime (không dựa vào global var)
+- ✅ **Trailing + Break-Even** — Bảo vệ lợi nhuận tự động
+- ✅ **Performance** — New-bar-only execution (giảm 99% CPU backtest)
+- ✅ **DCA isolator** — ManagePositions skip khi DCA chain active
+
 ### v2.0 (2025-03-17)
-- ✅ **Display Range Limit** — Show Last N Bars input (mặc định 2000)
-- ✅ **Fixed R:R TP** — TP = 3R cố định, không phụ thuộc liquidity
-- ✅ **SL Bug Fix** — Fix SL=0 bug, thêm min/max SL distance validation
-- ✅ **Clean Style** — Bỏ bgcolor overlay, compact labels, subtle box fills
-- ✅ **TP/SL Labels** — Hiện rõ target price + R:R trên chart
-- ✅ **Default SL Method** — Đổi sang Sweep Wick (đúng ICT hơn)
+- ✅ Display Range Limit, Fixed R:R TP, SL Bug Fix, Clean Style
 
 ### v1.0 (2025-03-16)
 - Initial release: SSL/BSL, Sweep Detection, Premium/Discount, OTE, Dashboard
@@ -125,6 +151,7 @@ Các indicator ICT trên TradingView thường tách biệt: 1 cái cho liquidit
 - [ ] Fair Value Gap (FVG) integration
 - [ ] Kill Zone time-based filter (London/NY)
 - [ ] Partial close tại TP1, trailing SL
+- [ ] PyPI package cho Python backtesting
 
 ## 📚 Nguồn Tham Khảo
 

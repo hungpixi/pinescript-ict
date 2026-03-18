@@ -1,1 +1,13 @@
+# Context (API keys, secrets)
 context.md
+
+# Compiled MQL5
+*.ex5
+*.ex4
+
+# MQL5 logs
+*.log
+
+# MT5 tester files
+*.opt
+*.forward
